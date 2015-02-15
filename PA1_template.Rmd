@@ -8,18 +8,103 @@ output:
 
 ## Loading and preprocessing the data
 
-
+```{r}
+setwd('C:\\ds\\R\\reproducible_research\\proj1')
+library(data.table)
+act_data <- read.csv('activity.csv', header=TRUE, na.strings='NA')
+act_data <- data.table(act_data)
+head(act_data)
+```
 
 ## What is mean total number of steps taken per day?
+Filtering out the rows containing valid information and the summing up the total number of steps for each day, we get:
+```{r}
+act_valid <- act_data[!is.na(act_data$steps), ]
+day_act <- act_valid[, list(daysteps=sum(steps)), by=date]
+hist(day_act$daysteps, xlab='steps per day', main='Distribution of steps taken per day')
+mean_day_steps <- mean(day_act$daysteps)
+median_day_steps <- median(day_act$daysteps)
+```
 
-
+The mean and median total number of steps taken per day (excluding days without valid data) is:  
+mean = `r as.integer(mean_day_steps)` steps,  
+median = `r median_day_steps` steps.
 
 ## What is the average daily activity pattern?
-
-
+From the valid data, calculate the average of steps taken in each interval:
+```{r}
+int_data <- act_valid[, list(avg_steps=mean(steps)), by=interval]
+plot(int_data, type='l', xlab='Interval', ylab='Average steps taken')
+interval_with_max_steps <- int_data$interval[which.max(int_data$avg_steps)]
+```
+The 5-minute interval that on average containing the maximum number of steps is `r interval_with_max_steps`. This is in the morning.
 
 ## Imputing missing values
+```{r}
+numNA <- sum(!complete.cases(act_data))
+```
+The number of rows with missing values are `r numNA`.
+
+We fill in the missing values with the average values from the same interval averaged across all days:
+```{r fillInMissingValues}
+act_data_imput <- act_data
+bNASteps <- is.na(act_data$steps)
+act_data_imput$steps[bNASteps] = int_data$avg_steps[as.integer(as.factor(act_data$interval[bNASteps]))]
+```
+Using the new dataset with the NA values filled in, we plot the average number of steps taken each day:
+```{r}
+day_act_imput <- act_data_imput[, list(daysteps=sum(steps)), by=date]
+hist(day_act_imput$daysteps, xlab='steps per day', main='Distribution of steps taken per day')
+mean_day_steps_imput <- mean(day_act_imput$daysteps)
+median_day_steps_imput <- median(day_act_imput$daysteps)
+```
+The mean and median steps taken per day after filling in the missing values are:  
+mean = `r as.integer(mean_day_steps_imput)` steps,   
+median = `r as.integer(median_day_steps_imput)` steps.
+
+As we can see, the mean did not change as a result of imputing. This is expected since we filled in the days with missing values using the mean of the valid days. The median did get shifted by a tiny bit. However, the effect of filling in the missing values with mean of valid days is minimal and can be ignored.
 
 
 
 ## Are there differences in activity patterns between weekdays and weekends?
+We use the **dplyr** package to generate a column that identifies each day as a weekday or a weekend day:
+```{r}
+library(dplyr)
+act_data_imput <- tbl_df(act_data_imput)
+act_data_imput$weekday <- wday(as.Date(act_data_imput$date, '%Y-%m-%d'))
+act_data_imput <- mutate(act_data_imput, wday=(weekday>=2 & weekday<=6))
+act_data_imput$wdaytype <- factor(act_data_imput$wday, labels=c('weekend', 'weekday'))
+```
+Now we separately average the steps for each interval for both week days and the weekend days:
+```{r}
+wdaysteps <- with(act_data_imput, tapply(steps, list('Interval'=interval, 'DayType'=wdaytype), mean))
+df_matrix <- as.data.frame(wdaysteps)
+df_matrix$interval <- rownames(df_matrix)
+```
+Now *df_matrix* contains the average steps taken for each interval on weekdays and weekend days. This data is in a 'messy' state and need to be cleaned up. We use the **tidyr** package to do data cleaning:
+```{r}
+library(tidyr)
+df_matrix <- tbl_df(df_matrix)
+df_matrix <- gather(df_matrix, daytype, steps, weekend:weekday) # gather weekday and weekend into one column called daytype
+df_matrix <- as.data.frame(df_matrix)
+df_matrix$daytype <- as.factor(df_matrix$daytype)
+```
+Before we plot the steps vs interval, we convert the interval values into time.
+```{r}
+df_matrix$interval <- as.numeric(df_matrix$interval)
+sInterval <- sprintf('%04d', df_matrix$interval)
+sInterval <- sub("(\\d+)(\\d{2})", "\\1:\\2:00", sInterval)
+head(sInterval)
+```
+Now that we have the time intervals in correct string format, we convert them into time in minutes:
+```{r}
+library(lubridate)
+df_matrix$tInterval <- as.numeric(as.duration(hms(sInterval) - hms('00:00:00')))/60
+head(df_matrix)
+```
+
+Now we can plot the average steps taken in each interval for weekdays and weekend days using the lattice package:
+```{r}
+library(lattice)
+xyplot(steps ~ tInterval | daytype, data=df_matrix, layout=c(1, 2), type='l', xlab='Minutes', ylab='Steps')
+```
